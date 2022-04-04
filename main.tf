@@ -54,16 +54,31 @@ resource "azurerm_network_security_group" "mtc-sg" {
   }
 }
 
-# Security group rules
-resource "azurerm_network_security_rule" "mtc-dev-rule" {
-  name                        = "mtc-dev-rule"
+# Security group rules for SSH
+resource "azurerm_network_security_rule" "mtc-ssh-rule" {
+  name                        = "mtc-ssh-rule"
   priority                    = 100
   direction                   = "Inbound"
   access                      = "Allow"
   protocol                    = "Tcp"
   source_port_range           = "*"
   destination_port_range      = "22"
-  source_address_prefix       = "34.99.233.123/32"
+  source_address_prefix       = "34.99.251.37/32"
+  destination_address_prefix  = "*"
+  resource_group_name         = azurerm_resource_group.mtc-rg.name
+  network_security_group_name = azurerm_network_security_group.mtc-sg.name
+}
+
+# Security group rules for HTTP
+resource "azurerm_network_security_rule" "mtc-http-rule" {
+  name                        = "mtc-http-rule"
+  priority                    = 101
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_ranges     = ["8080", "8005"]
+  source_address_prefix       = "*" #34.99.251.37/32
   destination_address_prefix  = "*"
   resource_group_name         = azurerm_resource_group.mtc-rg.name
   network_security_group_name = azurerm_network_security_group.mtc-sg.name
@@ -105,6 +120,7 @@ resource "azurerm_network_interface" "mtc-nic" {
   }
 }
 
+# Create a CentOS 7.9 Virtual Machine
 resource "azurerm_linux_virtual_machine" "mtc-vm" {
   name                = "mtc-vm"
   resource_group_name = azurerm_resource_group.mtc-rg.name
@@ -114,12 +130,6 @@ resource "azurerm_linux_virtual_machine" "mtc-vm" {
   network_interface_ids = [
     azurerm_network_interface.mtc-nic.id,
   ]
-
-  #  plan = {
-  #    name      = "CentOS 7.9"
-  #    product   = "centos-7-9"
-  #    publisher = "centos-7-9"
-  #  }
 
   custom_data = filebase64("customdata.tpl")
 
@@ -140,7 +150,27 @@ resource "azurerm_linux_virtual_machine" "mtc-vm" {
     version   = "7.9.2022012100"
   }
 
+  provisioner "local-exec" {
+    command = templatefile("${var.host_os}-ssh-script.tpl", {
+      hostname     = self.public_ip_address,
+      user         = "radu"
+      identityfile = "~/.ssh/id_rsa"
+    })
+    interpreter = var.host_os == "windows" ? ["Powershell", "-Command"] : ["bash", "-c"]
+    #interpreter = ["bash", "-c"]
+  }
+
   tags = {
     environment = "dev"
   }
+}
+
+data "azurerm_public_ip" "mtc-ip-data" {
+  name                = azurerm_public_ip.mtc-ip.name
+  resource_group_name = azurerm_resource_group.mtc-rg.name
+}
+
+output "public_ip_address" {
+  value = "${azurerm_linux_virtual_machine.mtc-vm.name} :${azurerm_public_ip.mtc-ip.ip_address}"
+  #value       = "${azurerm_linux_virtual_machine.mtc-vm.name}: ${data.azurerm_public_ip.mtc-ip-data.ip_address}"
 }
